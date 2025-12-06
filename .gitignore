@@ -9,6 +9,12 @@ venv/
 ENV/
 env/
 
+# Database
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
 # Environment variables
 .env
 *.env

@@ -1,7 +1,7 @@
 """
 AI Group Chat Backend
 Real-time group chat with AI assistant (@AI trigger)
-Built with FastAPI + Socket.IO + DeepSeek AI
+Built with FastAPI + Socket.IO + DeepSeek AI + SQLite
 """
 import os
 import re
@@ -16,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import socketio
 
 from deepseek_client import chat_completion_stream
+from database import init_db, get_db, DatabaseHelper
+from models import User as DBUser, Room as DBRoom, Message as DBMessage
 
 
 # ========== FastAPI Application ==========
@@ -77,21 +79,23 @@ class ChatMessage:
 
 # ========== State Management ==========
 class ChatState:
-    """Global chat state manager"""
+    """Global chat state manager with database integration"""
     def __init__(self):
-        self.users: Dict[str, User] = {}  # sid -> User
-        self.message_history: List[ChatMessage] = []
+        self.users: Dict[str, User] = {}  # sid -> User (online users)
+        self.user_db_ids: Dict[str, int] = {}  # sid -> user_id in database
         self.ai_queue: asyncio.Queue = asyncio.Queue()
         self.ai_processing: bool = False
-        self.max_history = 500  # Keep last 500 messages
+        self.default_room_id: int = None  # Will be set on startup
 
-    def add_user(self, sid: str, username: str):
+    def add_user(self, sid: str, username: str, user_db_id: int):
         """Add a user to the chat"""
         self.users[sid] = User(sid, username, datetime.now())
+        self.user_db_ids[sid] = user_db_id
 
     def remove_user(self, sid: str) -> Optional[str]:
         """Remove a user and return their username"""
         user = self.users.pop(sid, None)
+        self.user_db_ids.pop(sid, None)
         return user.username if user else None
 
     def get_username(self, sid: str) -> Optional[str]:
@@ -99,31 +103,28 @@ class ChatState:
         user = self.users.get(sid)
         return user.username if user else None
 
+    def get_user_db_id(self, sid: str) -> Optional[int]:
+        """Get database user ID by socket ID"""
+        return self.user_db_ids.get(sid)
+
     def username_exists(self, username: str) -> bool:
-        """Check if username already taken"""
+        """Check if username already taken (in current online users)"""
         return any(u.username == username for u in self.users.values())
 
-    def add_message(self, msg: ChatMessage):
-        """Add message to history"""
-        self.message_history.append(msg)
-        # Limit history size
-        if len(self.message_history) > self.max_history:
-            self.message_history = self.message_history[-self.max_history:]
-
-    def get_recent_messages(self, limit: int = 50) -> List[dict]:
-        """Get recent messages for new users"""
-        recent = self.message_history[-limit:]
-        return [msg.to_dict() for msg in recent]
-
     def get_context_for_ai(self, max_messages: int = 10) -> List[Dict[str, str]]:
-        """Get recent chat context for AI"""
-        recent = self.message_history[-max_messages:]
-        messages = []
-        for msg in recent:
-            role = "assistant" if msg.is_ai else "user"
-            content = msg.content if msg.is_ai else f"[{msg.username}]: {msg.content}"
-            messages.append({"role": role, "content": content})
-        return messages
+        """Get recent chat context for AI from database"""
+        with get_db() as db:
+            messages = DatabaseHelper.get_recent_messages(
+                db,
+                self.default_room_id,
+                limit=max_messages
+            )
+            result = []
+            for msg in messages:
+                role = "assistant" if msg.is_ai else "user"
+                content = msg.content if msg.is_ai else f"[{msg.user.username if msg.user else 'Unknown'}]: {msg.content}"
+                result.append({"role": role, "content": content})
+            return result
 
 
 # Global state instance
@@ -194,6 +195,7 @@ async def handle_ai_request(request: dict):
     """Handle a single AI request with streaming"""
     query = request['query']
     username = request['username']
+    user_db_id = request['user_db_id']
     timestamp = request['timestamp']
 
     print(f"[AI] Processing request from {username}: {query[:50]}...")
@@ -206,7 +208,7 @@ async def handle_ai_request(request: dict):
     messages.extend(context)
     messages.append({"role": "user", "content": query})
 
-    # Generate AI message ID
+    # Generate AI message ID (will be replaced by database ID)
     ai_message_id = f"ai_{timestamp.timestamp()}"
 
     # Notify clients that AI is starting response
@@ -257,17 +259,17 @@ async def handle_ai_request(request: dict):
             'id': ai_message_id
         })
 
-        # Save AI response to history
-        ai_msg = ChatMessage(
-            id=ai_message_id,
-            username='AI Assistant',
-            content=full_response,
-            timestamp=timestamp,
-            is_ai=True
-        )
-        chat_state.add_message(ai_msg)
-
-        print(f"[AI] Completed response ({len(full_response)} chars)")
+        # Save AI response to database
+        with get_db() as db:
+            db_message = DatabaseHelper.add_message(
+                db,
+                room_id=chat_state.default_room_id,
+                user_id=None,  # AI has no user_id
+                content=full_response,
+                is_ai=True,
+                triggered_by=user_db_id
+            )
+            print(f"[AI] Completed response ({len(full_response)} chars) [DB ID: {db_message.id}]")
 
     except Exception as e:
         print(f"[AI Stream Error] {e}")
@@ -305,14 +307,22 @@ async def user_join(sid, data):
         await sio.emit('error', {'message': 'Username is required'}, room=sid)
         return
 
-    # Check if username already taken
+    # Check if username already taken (online users)
     if chat_state.username_exists(username):
         await sio.emit('error', {'message': 'Username already taken'}, room=sid)
         return
 
-    # Add user
-    chat_state.add_user(sid, username)
-    print(f"[Socket.IO] User {username} joined (sid: {sid})")
+    # Get or create user in database
+    with get_db() as db:
+        db_user = DatabaseHelper.get_or_create_user(db, username)
+        user_db_id = db_user.id
+
+        # Add user to state
+        chat_state.add_user(sid, username, user_db_id)
+        print(f"[Socket.IO] User {username} joined (sid: {sid}, db_id: {user_db_id})")
+
+        # Add user to default room
+        DatabaseHelper.add_user_to_room(db, user_db_id, chat_state.default_room_id)
 
     # Broadcast to all clients
     await sio.emit('user_joined', {
@@ -321,9 +331,11 @@ async def user_join(sid, data):
         'timestamp': datetime.now().isoformat()
     })
 
-    # Send chat history to new user
-    history = chat_state.get_recent_messages(limit=50)
-    await sio.emit('chat_history', {'messages': history}, room=sid)
+    # Send chat history from database
+    with get_db() as db:
+        messages = DatabaseHelper.get_recent_messages(db, chat_state.default_room_id, limit=50)
+        history = [msg.to_dict() for msg in messages]
+        await sio.emit('chat_history', {'messages': history}, room=sid)
 
 
 @sio.event
@@ -338,24 +350,24 @@ async def chat_message(sid, data):
     if not content:
         return
 
-    # Generate message ID and timestamp
-    message_id = f"{sid}_{datetime.now().timestamp()}"
     timestamp = datetime.now()
+    user_db_id = chat_state.get_user_db_id(sid)
 
-    # Save to history
-    msg = ChatMessage(
-        id=message_id,
-        username=username,
-        content=content,
-        timestamp=timestamp,
-        is_ai=False
-    )
-    chat_state.add_message(msg)
+    # Save to database
+    with get_db() as db:
+        db_message = DatabaseHelper.add_message(
+            db,
+            room_id=chat_state.default_room_id,
+            user_id=user_db_id,
+            content=content,
+            is_ai=False
+        )
+        message_dict = db_message.to_dict()
 
     # Broadcast to all clients
-    await sio.emit('chat_message', msg.to_dict())
+    await sio.emit('chat_message', message_dict)
 
-    print(f"[Chat] {username}: {content[:50]}...")
+    print(f"[Chat] {username}: {content[:50]}... [DB ID: {message_dict['id']}]")
 
     # Check if @AI is mentioned
     if detect_ai_mention(content):
@@ -366,6 +378,7 @@ async def chat_message(sid, data):
         await chat_state.ai_queue.put({
             'query': query,
             'username': username,
+            'user_db_id': user_db_id,
             'timestamp': timestamp
         })
 
@@ -399,6 +412,17 @@ async def startup_event():
     """Start background tasks on startup"""
     print("[Server] Starting AI Group Chat Backend...")
     print(f"[Server] DEEPSEEK_API_KEY: {'Set' if os.getenv('DEEPSEEK_API_KEY') else 'NOT SET!'}")
+
+    # Initialize database
+    init_db()
+    print("[Database] Database initialized")
+
+    # Get default room ID
+    with get_db() as db:
+        default_room = DatabaseHelper.get_default_room(db)
+        if default_room:
+            chat_state.default_room_id = default_room.id
+            print(f"[Database] Default room ID: {chat_state.default_room_id}")
 
     # Start AI queue processor
     asyncio.create_task(process_ai_queue())
