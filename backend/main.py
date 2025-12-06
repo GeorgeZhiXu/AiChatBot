@@ -288,14 +288,12 @@ async def connect(sid, environ, auth):
     token = auth.get('token') if auth else None
 
     if token:
-        # Token-based authentication
+        # Token-based authentication - just verify, don't add user yet
+        # User will be added in user_join event
         with get_db() as db:
             user = get_user_by_token(db, token)
             if user:
-                # Store authenticated user info
-                chat_state.users[sid] = User(sid, user.username, datetime.now())
-                chat_state.user_db_ids[sid] = user.id
-                print(f"[Socket.IO] Authenticated user {user.username} connected (sid: {sid})")
+                print(f"[Socket.IO] Valid token for user {user.username} (sid: {sid})")
                 return True
             else:
                 print(f"[Socket.IO] Invalid token for sid: {sid}")
@@ -326,8 +324,9 @@ async def user_join(sid, data):
         await sio.emit('error', {'message': 'Username is required'}, room=sid)
         return
 
-    # Check if username already taken (online users)
-    if chat_state.username_exists(username):
+    # Check if username already taken by OTHER online users (not current sid)
+    existing_user = next((u for s, u in chat_state.users.items() if s != sid and u.username == username), None)
+    if existing_user:
         await sio.emit('error', {'message': 'Username already taken'}, room=sid)
         return
 
@@ -336,7 +335,7 @@ async def user_join(sid, data):
         db_user = DatabaseHelper.get_or_create_user(db, username)
         user_db_id = db_user.id
 
-        # Add user to state
+        # Add user to state (or update if reconnecting)
         chat_state.add_user(sid, username, user_db_id)
         print(f"[Socket.IO] User {username} joined (sid: {sid}, db_id: {user_db_id})")
 
