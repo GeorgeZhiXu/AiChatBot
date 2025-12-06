@@ -9,22 +9,30 @@ const SOCKET_URL = window.location.hostname === 'localhost'
 /**
  * Socket.IO custom hook
  * Manages WebSocket connection with auto-reconnect
+ * @param {string} token - Optional JWT token for authentication
  */
-export function useSocket() {
+export function useSocket(token = null) {
   const [socket, setSocket] = useState(null);
   const [connected, setConnected] = useState(false);
   const socketRef = useRef(null);
 
   useEffect(() => {
-    // Create Socket.IO connection
-    const newSocket = io(SOCKET_URL, {
+    // Create Socket.IO connection with optional auth
+    const connectionOptions = {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       reconnectionAttempts: 5,
       timeout: 20000
-    });
+    };
+
+    // Add auth token if provided
+    if (token) {
+      connectionOptions.auth = { token };
+    }
+
+    const newSocket = io(SOCKET_URL, connectionOptions);
 
     socketRef.current = newSocket;
     setSocket(newSocket);
