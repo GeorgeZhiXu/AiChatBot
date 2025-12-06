@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSocket } from './hooks/useSocket';
+import { useAuth } from './hooks/useAuth';
+import { AuthScreen } from './components/AuthScreen';
 
 function App() {
-  const { socket, connected } = useSocket();
+  const { token, user, loading: authLoading, login, register, logout } = useAuth();
+  const { socket, connected } = useSocket(token);
 
   // Login state
   const [username, setUsername] = useState('');
@@ -210,34 +213,43 @@ function App() {
     );
   };
 
-  // Login screen
+  // Authentication loading
+  if (authLoading) {
+    return (
+      <div className="loading-screen">
+        <div className="loading-spinner">Loading...</div>
+      </div>
+    );
+  }
+
+  // Not authenticated - show login/register
+  if (!token || !user) {
+    return <AuthScreen onLogin={login} onRegister={register} />;
+  }
+
+  // Authenticated but not joined chat - show simple join screen
   if (!isJoined) {
+    // Auto-set username from authenticated user
+    if (!username && user) {
+      setUsername(user.username);
+      handleJoin();
+    }
+
     return (
       <div className="login-screen">
         <div className="login-box">
           <h1>🤖 AI Group Chat</h1>
-          <p>Enter your username to start chatting</p>
-          <input
-            type="text"
-            className="login-input"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Enter username"
-            maxLength={20}
-            disabled={!connected}
-            autoFocus
-          />
+          <p>Welcome, {user.username}!</p>
           <button
             className="login-button"
             onClick={handleJoin}
-            disabled={!connected || !username.trim()}
+            disabled={!connected}
           >
-            {connected ? 'Join Chat' : 'Connecting...'}
+            {connected ? 'Enter Chat' : 'Connecting...'}
           </button>
-          <p className="login-hint">
-            💡 Use <code>@AI</code> in messages to talk with the AI assistant
-          </p>
+          <button className="logout-button" onClick={logout}>
+            Logout
+          </button>
         </div>
       </div>
     );

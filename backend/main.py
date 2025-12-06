@@ -18,6 +18,9 @@ import socketio
 from deepseek_client import chat_completion_stream
 from database import init_db, get_db, DatabaseHelper
 from models import User as DBUser, Room as DBRoom, Message as DBMessage
+from auth import create_access_token, authenticate_user, create_user, get_user_by_token
+from fastapi import HTTPException, Header
+from pydantic import BaseModel
 
 
 # ========== FastAPI Application ==========
@@ -280,9 +283,23 @@ async def handle_ai_request(request: dict):
 
 # ========== Socket.IO Events ==========
 @sio.event
-async def connect(sid, environ):
-    """Client connected"""
-    print(f"[Socket.IO] Client connected: {sid}")
+async def connect(sid, environ, auth):
+    """Client connected - supports optional token authentication"""
+    token = auth.get('token') if auth else None
+
+    if token:
+        # Token-based authentication - just verify, don't add user yet
+        # User will be added in user_join event
+        with get_db() as db:
+            user = get_user_by_token(db, token)
+            if user:
+                print(f"[Socket.IO] Valid token for user {user.username} (sid: {sid})")
+                return True
+            else:
+                print(f"[Socket.IO] Invalid token for sid: {sid}")
+                # Don't reject - allow fallback to username login
+
+    print(f"[Socket.IO] Client connected: {sid} (no token)")
 
 
 @sio.event
@@ -307,8 +324,9 @@ async def user_join(sid, data):
         await sio.emit('error', {'message': 'Username is required'}, room=sid)
         return
 
-    # Check if username already taken (online users)
-    if chat_state.username_exists(username):
+    # Check if username already taken by OTHER online users (not current sid)
+    existing_user = next((u for s, u in chat_state.users.items() if s != sid and u.username == username), None)
+    if existing_user:
         await sio.emit('error', {'message': 'Username already taken'}, room=sid)
         return
 
@@ -317,7 +335,7 @@ async def user_join(sid, data):
         db_user = DatabaseHelper.get_or_create_user(db, username)
         user_db_id = db_user.id
 
-        # Add user to state
+        # Add user to state (or update if reconnecting)
         chat_state.add_user(sid, username, user_db_id)
         print(f"[Socket.IO] User {username} joined (sid: {sid}, db_id: {user_db_id})")
 
@@ -383,7 +401,19 @@ async def chat_message(sid, data):
         })
 
 
-# ========== HTTP Endpoints (Optional) ==========
+# ========== Pydantic Models for API ==========
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    email: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+# ========== HTTP Endpoints ==========
 @app.get("/")
 def read_root():
     """Health check endpoint"""
@@ -391,8 +421,7 @@ def read_root():
         "status": "ok",
         "service": "AI Group Chat",
         "users_online": len(chat_state.users),
-        "ai_processing": chat_state.ai_processing,
-        "message_count": len(chat_state.message_history)
+        "ai_processing": chat_state.ai_processing
     }
 
 
@@ -404,6 +433,56 @@ def health_check():
         "users_online": len(chat_state.users),
         "ai_processing": chat_state.ai_processing
     }
+
+
+# ========== Authentication Endpoints ==========
+@app.post("/api/auth/register")
+async def register(req: RegisterRequest):
+    """Register a new user"""
+    with get_db() as db:
+        try:
+            user = create_user(db, req.username, req.password, req.email)
+            token = create_access_token({"sub": user.username, "user_id": user.id})
+            return {
+                "token": token,
+                "user": user.to_dict()
+            }
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            print(f"[Auth Error] Register: {e}")
+            raise HTTPException(status_code=500, detail="Registration failed")
+
+
+@app.post("/api/auth/login")
+async def login(req: LoginRequest):
+    """Login user"""
+    with get_db() as db:
+        user = authenticate_user(db, req.username, req.password)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+
+        token = create_access_token({"sub": user.username, "user_id": user.id})
+        return {
+            "token": token,
+            "user": user.to_dict()
+        }
+
+
+@app.get("/api/auth/me")
+async def get_current_user(authorization: str = Header(None)):
+    """Get current authenticated user"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+
+    token = authorization.replace("Bearer ", "")
+
+    with get_db() as db:
+        user = get_user_by_token(db, token)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        return user.to_dict()
 
 
 # ========== Startup Event ==========
