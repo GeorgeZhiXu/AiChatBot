@@ -1,10 +1,10 @@
 name: Deploy to Mac Mini
 
 on:
-  # push:
-  #   branches:
-  #     - main
-  workflow_dispatch:  # Only manual trigger for now
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   deploy:
