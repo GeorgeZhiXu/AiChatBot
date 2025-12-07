@@ -1,9 +1,20 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const API_URL = window.location.hostname === 'localhost'
-  ? 'http://localhost:8000/api'
-  : `http://${window.location.hostname}:8000/api`;
+// API URL configuration - adapts to development/production
+const getApiUrl = () => {
+  // Production: use same host (nginx proxy handles /api)
+  if (import.meta.env.PROD) {
+    return `${window.location.origin}/api`;
+  }
+  // Development: direct connection to backend
+  if (window.location.hostname === 'localhost') {
+    return 'http://localhost:8000/api';
+  }
+  return `http://${window.location.hostname}:8000/api`;
+};
+
+const API_URL = getApiUrl();
 
 /**
  * Authentication hook

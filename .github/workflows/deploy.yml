@@ -1,0 +1,73 @@
+name: Deploy to Mac Mini
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Mac Mini via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.MAC_MINI_HOST }}
+          username: ${{ secrets.MAC_MINI_USER }}
+          key: ${{ secrets.MAC_MINI_SSH_KEY }}
+          port: ${{ secrets.MAC_MINI_SSH_PORT || 22 }}
+          script: |
+            # Navigate to app directory
+            cd ~/AiChatBot || exit 1
+
+            # Pull latest code
+            echo "📥 Pulling latest code..."
+            git fetch origin
+            git reset --hard origin/main
+
+            # Backend deployment
+            echo "🔧 Deploying backend..."
+            cd backend
+            source .venv/bin/activate
+            pip install -r requirements.txt --quiet
+
+            # Restart backend service
+            launchctl stop com.aichatbot.backend 2>/dev/null || true
+            sleep 2
+            launchctl start com.aichatbot.backend
+
+            # Frontend deployment
+            echo "🎨 Deploying frontend..."
+            cd ../frontend
+            npm install --silent
+            npm run build
+
+            # Restart frontend service
+            launchctl stop com.aichatbot.frontend 2>/dev/null || true
+            sleep 2
+            launchctl start com.aichatbot.frontend
+
+            # Check service status
+            echo "✅ Deployment complete!"
+            echo "Backend: http://localhost:8030/health"
+            echo "Frontend: http://localhost:3030"
+
+            # Verify services
+            sleep 5
+            curl -s http://localhost:8030/health || echo "⚠️ Backend not responding"
+            curl -s http://localhost:3030 || echo "⚠️ Frontend not responding"
+
+      - name: Deployment notification
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Deployment successful!"
+          else
+            echo "❌ Deployment failed!"
+          fi

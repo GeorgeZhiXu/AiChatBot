@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aichatbot.backend</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>REPLACE_WITH_HOME/AiChatBot/deployment/backend-start.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>REPLACE_WITH_HOME/AiChatBot/backend</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>DEEPSEEK_API_KEY</key>
+        <string>REPLACE_WITH_YOUR_API_KEY</string>
+        <key>SECRET_KEY</key>
+        <string>REPLACE_WITH_YOUR_SECRET_KEY</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>REPLACE_WITH_HOME/AiChatBot/logs/backend.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>REPLACE_WITH_HOME/AiChatBot/logs/backend.error.log</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>
