@@ -19,6 +19,7 @@ from deepseek_client import chat_completion_stream
 from database import init_db, get_db, DatabaseHelper
 from models import User as DBUser, Room as DBRoom, Message as DBMessage
 from auth import create_access_token, authenticate_user, create_user, get_user_by_token
+from room_manager import RoomManager
 from fastapi import HTTPException, Header
 from pydantic import BaseModel
 
@@ -86,6 +87,7 @@ class ChatState:
     def __init__(self):
         self.users: Dict[str, User] = {}  # sid -> User (online users)
         self.user_db_ids: Dict[str, int] = {}  # sid -> user_id in database
+        self.user_current_rooms: Dict[str, int] = {}  # sid -> current_room_id
         self.ai_queue: asyncio.Queue = asyncio.Queue()
         self.ai_processing: bool = False
         self.default_room_id: int = None  # Will be set on startup
@@ -99,6 +101,7 @@ class ChatState:
         """Remove a user and return their username"""
         user = self.users.pop(sid, None)
         self.user_db_ids.pop(sid, None)
+        self.user_current_rooms.pop(sid, None)
         return user.username if user else None
 
     def get_username(self, sid: str) -> Optional[str]:
@@ -110,16 +113,24 @@ class ChatState:
         """Get database user ID by socket ID"""
         return self.user_db_ids.get(sid)
 
+    def set_user_room(self, sid: str, room_id: int):
+        """Set user's current room"""
+        self.user_current_rooms[sid] = room_id
+
+    def get_user_room(self, sid: str) -> Optional[int]:
+        """Get user's current room ID"""
+        return self.user_current_rooms.get(sid)
+
     def username_exists(self, username: str) -> bool:
         """Check if username already taken (in current online users)"""
         return any(u.username == username for u in self.users.values())
 
-    def get_context_for_ai(self, max_messages: int = 10) -> List[Dict[str, str]]:
+    def get_context_for_ai(self, room_id: int, max_messages: int = 10) -> List[Dict[str, str]]:
         """Get recent chat context for AI from database"""
         with get_db() as db:
             messages = DatabaseHelper.get_recent_messages(
                 db,
-                self.default_room_id,
+                room_id,
                 limit=max_messages
             )
             result = []
@@ -140,19 +151,18 @@ executor = ThreadPoolExecutor(max_workers=2)
 # ========== @AI Detection ==========
 def detect_ai_mention(message: str) -> bool:
     """Detect if message contains @AI mention"""
+    # Match @AI or @ai with optional spaces, regardless of what follows
     patterns = [
-        r'@AI\b',
-        r'@ai\b',
-        r'@\s*AI\b',
-        r'@\s*ai\b'
+        r'@\s*AI',
+        r'@\s*ai'
     ]
     return any(re.search(pattern, message, re.IGNORECASE) for pattern in patterns)
 
 
 def extract_ai_query(message: str) -> str:
     """Extract actual query from @AI message"""
-    # Remove @AI mention
-    cleaned = re.sub(r'@\s*AI\b', '', message, flags=re.IGNORECASE).strip()
+    # Remove @AI mention (with optional spaces before AI)
+    cleaned = re.sub(r'@\s*AI', '', message, flags=re.IGNORECASE).strip()
     return cleaned if cleaned else message
 
 
@@ -199,12 +209,13 @@ async def handle_ai_request(request: dict):
     query = request['query']
     username = request['username']
     user_db_id = request['user_db_id']
+    room_id = request['room_id']
     timestamp = request['timestamp']
 
-    print(f"[AI] Processing request from {username}: {query[:50]}...")
+    print(f"[AI] Processing request from {username} in room {room_id}: {query[:50]}...")
 
-    # Build message context
-    context = chat_state.get_context_for_ai(max_messages=10)
+    # Build message context from current room
+    context = chat_state.get_context_for_ai(room_id, max_messages=10)
     messages = [
         {"role": "system", "content": "You are a helpful AI assistant in a group chat. Provide concise and friendly responses."}
     ]
@@ -214,13 +225,13 @@ async def handle_ai_request(request: dict):
     # Generate AI message ID (will be replaced by database ID)
     ai_message_id = f"ai_{timestamp.timestamp()}"
 
-    # Notify clients that AI is starting response
+    # Notify clients in current room that AI is starting response
     await sio.emit('ai_response_start', {
         'id': ai_message_id,
         'username': 'AI Assistant',
         'triggered_by': username,
         'timestamp': timestamp.isoformat()
-    })
+    }, room=f"room_{room_id}")
 
     # Stream AI response
     full_response = ""
@@ -247,32 +258,32 @@ async def handle_ai_request(request: dict):
         # Get all chunks from sync generator
         chunks = await loop.run_in_executor(executor, sync_stream)
 
-        # Stream chunks to clients
+        # Stream chunks to clients in current room only
         for chunk in chunks:
             full_response += chunk
             await sio.emit('ai_response_chunk', {
                 'id': ai_message_id,
                 'chunk': chunk
-            })
+            }, room=f"room_{room_id}")
             # Small delay for better streaming effect
             await asyncio.sleep(0.01)
 
-        # Notify completion
+        # Notify completion to current room only
         await sio.emit('ai_response_end', {
             'id': ai_message_id
-        })
+        }, room=f"room_{room_id}")
 
         # Save AI response to database
         with get_db() as db:
             db_message = DatabaseHelper.add_message(
                 db,
-                room_id=chat_state.default_room_id,
+                room_id=room_id,
                 user_id=None,  # AI has no user_id
                 content=full_response,
                 is_ai=True,
                 triggered_by=user_db_id
             )
-            print(f"[AI] Completed response ({len(full_response)} chars) [DB ID: {db_message.id}]")
+            print(f"[AI] Completed response ({len(full_response)} chars) [Room: {room_id}, DB ID: {db_message.id}]")
 
     except Exception as e:
         print(f"[AI Stream Error] {e}")
@@ -337,10 +348,21 @@ async def user_join(sid, data):
 
         # Add user to state (or update if reconnecting)
         chat_state.add_user(sid, username, user_db_id)
+
+        # Set user to default room initially
+        chat_state.set_user_room(sid, chat_state.default_room_id)
+
         print(f"[Socket.IO] User {username} joined (sid: {sid}, db_id: {user_db_id})")
 
         # Add user to default room
         DatabaseHelper.add_user_to_room(db, user_db_id, chat_state.default_room_id)
+
+        # Get user's room list
+        user_rooms = RoomManager.list_user_rooms(db, user_db_id)
+        rooms_data = [room.to_dict() for room in user_rooms]
+
+    # Join default room's Socket.IO room for message broadcasting
+    await sio.enter_room(sid, f"room_{chat_state.default_room_id}")
 
     # Broadcast to all clients
     await sio.emit('user_joined', {
@@ -349,11 +371,14 @@ async def user_join(sid, data):
         'timestamp': datetime.now().isoformat()
     })
 
-    # Send chat history from database
+    # Send user's room list
+    await sio.emit('room_list', {'rooms': rooms_data}, room=sid)
+
+    # Send chat history from default room
     with get_db() as db:
         messages = DatabaseHelper.get_recent_messages(db, chat_state.default_room_id, limit=50)
         history = [msg.to_dict() for msg in messages]
-        await sio.emit('chat_history', {'messages': history}, room=sid)
+        await sio.emit('chat_history', {'messages': history, 'room_id': chat_state.default_room_id}, room=sid)
 
 
 @sio.event
@@ -370,35 +395,267 @@ async def chat_message(sid, data):
 
     timestamp = datetime.now()
     user_db_id = chat_state.get_user_db_id(sid)
+    current_room_id = chat_state.get_user_room(sid) or chat_state.default_room_id
 
     # Save to database
     with get_db() as db:
         db_message = DatabaseHelper.add_message(
             db,
-            room_id=chat_state.default_room_id,
+            room_id=current_room_id,
             user_id=user_db_id,
             content=content,
             is_ai=False
         )
         message_dict = db_message.to_dict()
 
-    # Broadcast to all clients
-    await sio.emit('chat_message', message_dict)
+    # Broadcast to all clients in the same room only
+    await sio.emit('chat_message', message_dict, room=f"room_{current_room_id}")
 
-    print(f"[Chat] {username}: {content[:50]}... [DB ID: {message_dict['id']}]")
+    print(f"[Chat] {username} in room {current_room_id}: {content[:50]}... [DB ID: {message_dict['id']}]")
 
     # Check if @AI is mentioned
     if detect_ai_mention(content):
         query = extract_ai_query(content)
-        print(f"[AI] Triggered by {username}, query: {query[:50]}...")
+        print(f"[AI] Triggered by {username} in room {current_room_id}, query: {query[:50]}...")
 
         # Add to AI processing queue
         await chat_state.ai_queue.put({
             'query': query,
             'username': username,
             'user_db_id': user_db_id,
+            'room_id': current_room_id,
             'timestamp': timestamp
         })
+
+
+# ========== Room Management Events ==========
+@sio.event
+async def create_room(sid, data):
+    """Create a new chat room"""
+    username = chat_state.get_username(sid)
+    user_db_id = chat_state.get_user_db_id(sid)
+
+    if not username or not user_db_id:
+        await sio.emit('error', {'message': 'Not authenticated'}, room=sid)
+        return
+
+    room_name = data.get('name', '').strip()
+    room_description = data.get('description', '').strip()
+    is_private = data.get('is_private', False)
+
+    if not room_name:
+        await sio.emit('error', {'message': 'Room name is required'}, room=sid)
+        return
+
+    with get_db() as db:
+        try:
+            room = RoomManager.create_room(db, room_name, room_description, user_db_id, is_private)
+            print(f"[Room] {username} created room: {room_name} (id: {room.id})")
+
+            # Send success to creator
+            await sio.emit('room_created', {
+                'room': room.to_dict(),
+                'message': f"Room '{room_name}' created successfully"
+            }, room=sid)
+
+            # Broadcast to all users if public
+            if not is_private:
+                await sio.emit('room_list_updated', {
+                    'action': 'created',
+                    'room': room.to_dict()
+                })
+
+        except ValueError as e:
+            await sio.emit('error', {'message': str(e)}, room=sid)
+
+
+@sio.event
+async def join_room(sid, data):
+    """Join a chat room"""
+    username = chat_state.get_username(sid)
+    user_db_id = chat_state.get_user_db_id(sid)
+
+    if not username or not user_db_id:
+        await sio.emit('error', {'message': 'Not authenticated'}, room=sid)
+        return
+
+    room_id = data.get('room_id')
+    if not room_id:
+        await sio.emit('error', {'message': 'Room ID is required'}, room=sid)
+        return
+
+    with get_db() as db:
+        try:
+            # Check if room exists
+            room = RoomManager.get_room_by_id(db, room_id)
+            if not room:
+                await sio.emit('error', {'message': 'Room not found'}, room=sid)
+                return
+
+            # Join room in database
+            RoomManager.join_room(db, user_db_id, room_id)
+
+            # Join Socket.IO room
+            await sio.enter_room(sid, f"room_{room_id}")
+
+            # Set as current room
+            chat_state.set_user_room(sid, room_id)
+
+            print(f"[Room] {username} joined room: {room.name} (id: {room_id})")
+
+            # Load room history
+            messages = DatabaseHelper.get_recent_messages(db, room_id, limit=50)
+            history = [msg.to_dict() for msg in messages]
+
+            await sio.emit('room_joined', {
+                'room': room.to_dict(include_members=True),
+                'messages': history
+            }, room=sid)
+
+            # Notify room members
+            await sio.emit('user_joined_room', {
+                'username': username,
+                'room_id': room_id,
+                'timestamp': datetime.now().isoformat()
+            }, room=f"room_{room_id}", skip_sid=sid)
+
+        except ValueError as e:
+            await sio.emit('error', {'message': str(e)}, room=sid)
+
+
+@sio.event
+async def leave_room(sid, data):
+    """Leave a chat room"""
+    username = chat_state.get_username(sid)
+    user_db_id = chat_state.get_user_db_id(sid)
+
+    if not username or not user_db_id:
+        return
+
+    room_id = data.get('room_id')
+    if not room_id:
+        return
+
+    with get_db() as db:
+        # Don't allow leaving default room
+        default_room = DatabaseHelper.get_default_room(db)
+        if room_id == default_room.id:
+            await sio.emit('error', {'message': 'Cannot leave default room'}, room=sid)
+            return
+
+        RoomManager.leave_room(db, user_db_id, room_id)
+
+    # Leave Socket.IO room
+    await sio.leave_room(sid, f"room_{room_id}")
+
+    print(f"[Room] {username} left room: {room_id}")
+
+    # Notify remaining members
+    await sio.emit('user_left_room', {
+        'username': username,
+        'room_id': room_id,
+        'timestamp': datetime.now().isoformat()
+    }, room=f"room_{room_id}")
+
+    await sio.emit('room_left', {'room_id': room_id}, room=sid)
+
+
+@sio.event
+async def switch_room(sid, data):
+    """Switch to a different room"""
+    username = chat_state.get_username(sid)
+    user_db_id = chat_state.get_user_db_id(sid)
+
+    if not username or not user_db_id:
+        await sio.emit('error', {'message': 'Not authenticated'}, room=sid)
+        return
+
+    room_id = data.get('room_id')
+    if not room_id:
+        await sio.emit('error', {'message': 'Room ID is required'}, room=sid)
+        return
+
+    with get_db() as db:
+        # Check if user is member of room
+        if not RoomManager.is_user_in_room(db, user_db_id, room_id):
+            await sio.emit('error', {'message': 'You are not a member of this room'}, room=sid)
+            return
+
+        # Leave previous Socket.IO room if exists
+        old_room_id = chat_state.get_user_room(sid)
+        if old_room_id:
+            await sio.leave_room(sid, f"room_{old_room_id}")
+
+        # Join new Socket.IO room
+        await sio.enter_room(sid, f"room_{room_id}")
+
+        # Set as current room
+        chat_state.set_user_room(sid, room_id)
+
+        # Load room history
+        messages = DatabaseHelper.get_recent_messages(db, room_id, limit=50)
+        history = [msg.to_dict() for msg in messages]
+
+        room = RoomManager.get_room_by_id(db, room_id)
+
+        await sio.emit('room_switched', {
+            'room': room.to_dict(include_members=True),
+            'messages': history
+        }, room=sid)
+
+        print(f"[Room] {username} switched to room: {room.name} (id: {room_id})")
+
+
+@sio.event
+async def list_rooms(sid, data):
+    """Get list of available rooms"""
+    user_db_id = chat_state.get_user_db_id(sid)
+
+    if not user_db_id:
+        await sio.emit('error', {'message': 'Not authenticated'}, room=sid)
+        return
+
+    with get_db() as db:
+        # Get user's rooms
+        user_rooms = RoomManager.list_user_rooms(db, user_db_id)
+        # Get public rooms
+        public_rooms = RoomManager.list_public_rooms(db)
+
+        # Combine and deduplicate
+        all_rooms = {room.id: room for room in user_rooms + public_rooms}
+        rooms_data = [room.to_dict() for room in all_rooms.values()]
+
+        await sio.emit('room_list', {'rooms': rooms_data}, room=sid)
+
+
+@sio.event
+async def delete_room(sid, data):
+    """Delete a chat room (creator only)"""
+    username = chat_state.get_username(sid)
+    user_db_id = chat_state.get_user_db_id(sid)
+
+    if not username or not user_db_id:
+        await sio.emit('error', {'message': 'Not authenticated'}, room=sid)
+        return
+
+    room_id = data.get('room_id')
+    if not room_id:
+        await sio.emit('error', {'message': 'Room ID is required'}, room=sid)
+        return
+
+    with get_db() as db:
+        try:
+            RoomManager.delete_room(db, room_id, user_db_id)
+            print(f"[Room] {username} deleted room: {room_id}")
+
+            # Notify all users
+            await sio.emit('room_deleted', {
+                'room_id': room_id,
+                'message': f"Room was deleted by {username}"
+            })
+
+        except ValueError as e:
+            await sio.emit('error', {'message': str(e)}, room=sid)
 
 
 # ========== Pydantic Models for API ==========

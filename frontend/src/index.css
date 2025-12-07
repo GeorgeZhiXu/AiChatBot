@@ -260,9 +260,128 @@ code {
 /* ========== Chat Screen ========== */
 .chat-screen {
   display: flex;
-  flex-direction: column;
   height: 100vh;
   background-color: #020617;
+}
+
+/* ========== Room Sidebar ========== */
+.room-list {
+  width: 280px;
+  background-color: #1e293b;
+  border-right: 2px solid #374151;
+  display: flex;
+  flex-direction: column;
+}
+
+.room-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 2px solid #374151;
+}
+
+.room-list-header h3 {
+  font-size: 1.1rem;
+  color: #fff;
+  margin: 0;
+}
+
+.create-room-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background-color: #667eea;
+  color: white;
+  font-size: 1.5rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.create-room-btn:hover {
+  background-color: #764ba2;
+}
+
+.room-list-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.empty-rooms {
+  text-align: center;
+  color: #6b7280;
+  padding: 20px;
+  font-size: 0.9rem;
+}
+
+.room-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  margin-bottom: 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.room-item:hover {
+  background-color: #374151;
+}
+
+.room-item.active {
+  background-color: #667eea;
+}
+
+.room-info {
+  flex: 1;
+  overflow: hidden;
+}
+
+.room-name {
+  font-weight: 600;
+  color: #e5e7eb;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.room-item.active .room-name {
+  color: white;
+}
+
+.room-description {
+  font-size: 0.8rem;
+  color: #9ca3af;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.delete-room-btn {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.delete-room-btn:hover {
+  opacity: 1;
+}
+
+/* ========== Main Chat Area ========== */
+.chat-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Header */
@@ -275,10 +394,21 @@ code {
   border-bottom: 2px solid #374151;
 }
 
+.header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .chat-header h2 {
   font-size: 1.5rem;
   color: #fff;
   margin: 0;
+}
+
+.room-description {
+  font-size: 0.85rem;
+  color: #9ca3af;
 }
 
 .user-info {
@@ -302,6 +432,23 @@ code {
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 0.75rem;
+  color: white;
+}
+
+.logout-btn-small {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  background-color: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.logout-btn-small:hover {
+  background-color: #ef4444;
+  border-color: #ef4444;
   color: white;
 }
 
@@ -536,8 +683,173 @@ code {
   cursor: not-allowed;
 }
 
+/* ========== Create Room Modal ========== */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background-color: #1e293b;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #374151;
+}
+
+.modal-header h2 {
+  font-size: 1.3rem;
+  color: #fff;
+  margin: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 2rem;
+  color: #9ca3af;
+  cursor: pointer;
+  line-height: 1;
+  transition: color 0.2s;
+}
+
+.modal-close:hover {
+  color: #fff;
+}
+
+.modal-form {
+  padding: 24px;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  color: #e5e7eb;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.form-group input[type="text"],
+.form-group textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 2px solid #374151;
+  border-radius: 6px;
+  background-color: #0f172a;
+  color: #e5e7eb;
+  font-size: 0.95rem;
+  transition: border-color 0.2s;
+}
+
+.form-group input[type="text"]:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.form-group textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.form-group.checkbox {
+  display: flex;
+  align-items: center;
+}
+
+.form-group.checkbox label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.form-group.checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.form-error {
+  background-color: #7f1d1d;
+  color: #fecaca;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  margin-bottom: 16px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.btn-primary,
+.btn-secondary {
+  padding: 10px 20px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background-color: transparent;
+  border: 1px solid #374151;
+  color: #9ca3af;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: #374151;
+  color: #e5e7eb;
+}
+
 /* ========== Responsive Design ========== */
 @media (max-width: 768px) {
+  .room-list {
+    width: 240px;
+  }
+
   .chat-header {
     flex-direction: column;
     gap: 12px;
