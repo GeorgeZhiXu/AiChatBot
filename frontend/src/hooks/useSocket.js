@@ -1,10 +1,20 @@
 import { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 
-// Auto-detect Socket.IO URL based on current host
-const SOCKET_URL = window.location.hostname === 'localhost'
-  ? 'http://localhost:8000'
-  : `http://${window.location.hostname}:8000`;
+// Socket.IO URL configuration - adapts to development/production
+const getSocketUrl = () => {
+  // Production: use same host (nginx proxy handles /socket.io)
+  if (import.meta.env.PROD) {
+    return window.location.origin;
+  }
+  // Development: direct connection to backend
+  if (window.location.hostname === 'localhost') {
+    return 'http://localhost:8000';
+  }
+  return `http://${window.location.hostname}:8000`;
+};
+
+const SOCKET_URL = getSocketUrl();
 
 /**
  * Socket.IO custom hook

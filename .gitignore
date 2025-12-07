@@ -20,6 +20,11 @@ env/
 *.env
 !.env.example
 
+# Deployment
+logs/
+backups/
+*.log
+
 # Node
 node_modules/
 npm-debug.log*
