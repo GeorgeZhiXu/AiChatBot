@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSocket } from './hooks/useSocket';
 import { useAuth } from './hooks/useAuth';
 import { AuthScreen } from './components/AuthScreen';
+import { RoomList } from './components/RoomList';
 
 function App() {
   const { token, user, loading: authLoading, login, register, logout } = useAuth();
@@ -16,6 +17,10 @@ function App() {
   const [input, setInput] = useState('');
   const [userCount, setUserCount] = useState(0);
   const [aiStreaming, setAiStreaming] = useState(false);
+
+  // Room state
+  const [rooms, setRooms] = useState([]);
+  const [currentRoom, setCurrentRoom] = useState(null);
 
   // Auto-scroll ref
   const messagesEndRef = useRef(null);
@@ -58,6 +63,79 @@ function App() {
         type: msg.is_ai ? 'ai' : 'user'
       }));
       setMessages(history);
+      // Set current room if provided
+      if (data.room_id && !currentRoom) {
+        const room = rooms.find(r => r.id === data.room_id);
+        if (room) setCurrentRoom(room);
+      }
+    });
+
+    // Room list
+    socket.on('room_list', (data) => {
+      setRooms(data.rooms);
+      // Set default room as current if not set
+      if (!currentRoom && data.rooms.length > 0) {
+        const defaultRoom = data.rooms.find(r => r.name === 'General') || data.rooms[0];
+        setCurrentRoom(defaultRoom);
+      }
+    });
+
+    // Room created (by current user)
+    socket.on('room_created', (data) => {
+      // Check if room already exists
+      setRooms(prev => {
+        const exists = prev.some(r => r.id === data.room.id);
+        if (exists) return prev;
+        return [...prev, data.room];
+      });
+      alert(data.message);
+      // Auto-switch to new room
+      handleRoomSwitch(data.room);
+    });
+
+    // Room list updated (by other users)
+    socket.on('room_list_updated', (data) => {
+      if (data.action === 'created') {
+        setRooms(prev => {
+          // Avoid duplicates
+          const exists = prev.some(r => r.id === data.room.id);
+          if (exists) return prev;
+          return [...prev, data.room];
+        });
+      }
+    });
+
+    // Room joined
+    socket.on('room_joined', (data) => {
+      setCurrentRoom(data.room);
+      const history = data.messages.map(msg => ({
+        ...msg,
+        type: msg.is_ai ? 'ai' : 'user'
+      }));
+      setMessages(history);
+    });
+
+    // Room switched
+    socket.on('room_switched', (data) => {
+      setCurrentRoom(data.room);
+      const history = data.messages.map(msg => ({
+        ...msg,
+        type: msg.is_ai ? 'ai' : 'user'
+      }));
+      setMessages(history);
+    });
+
+    // Room deleted
+    socket.on('room_deleted', (data) => {
+      setRooms(prev => prev.filter(r => r.id !== data.room_id));
+      if (currentRoom?.id === data.room_id) {
+        // Switch to default room
+        const defaultRoom = rooms.find(r => r.name === 'General');
+        if (defaultRoom) {
+          handleRoomSwitch(defaultRoom);
+        }
+      }
+      alert(data.message);
     });
 
     // New chat message
@@ -136,8 +214,14 @@ function App() {
       socket.off('ai_busy');
       socket.off('error');
       socket.off('ai_error');
+      socket.off('room_list');
+      socket.off('room_created');
+      socket.off('room_list_updated');
+      socket.off('room_joined');
+      socket.off('room_switched');
+      socket.off('room_deleted');
     };
-  }, [socket]);
+  }, [socket, rooms, currentRoom]);
 
   // Join chat
   const handleJoin = () => {
@@ -163,6 +247,22 @@ function App() {
         handleJoin();
       }
     }
+  };
+
+  // Room operations
+  const handleRoomSwitch = (room) => {
+    if (!socket || room.id === currentRoom?.id) return;
+    socket.emit('switch_room', { room_id: room.id });
+  };
+
+  const handleCreateRoom = ({ name, description, is_private }) => {
+    if (!socket) return;
+    socket.emit('create_room', { name, description, is_private });
+  };
+
+  const handleDeleteRoom = (roomId) => {
+    if (!socket) return;
+    socket.emit('delete_room', { room_id: roomId });
   };
 
   // Render message based on type
@@ -227,12 +327,13 @@ function App() {
     return <AuthScreen onLogin={login} onRegister={register} />;
   }
 
-  // Authenticated but not joined chat - show simple join screen
+  // Authenticated but not joined chat - auto-join
   if (!isJoined) {
-    // Auto-set username from authenticated user
-    if (!username && user) {
+    // Auto-set username from authenticated user and join
+    if (user && connected && socket) {
       setUsername(user.username);
-      handleJoin();
+      setIsJoined(true);
+      socket.emit('user_join', { username: user.username });
     }
 
     return (
@@ -240,16 +341,7 @@ function App() {
         <div className="login-box">
           <h1>🤖 AI Group Chat</h1>
           <p>Welcome, {user.username}!</p>
-          <button
-            className="login-button"
-            onClick={handleJoin}
-            disabled={!connected}
-          >
-            {connected ? 'Enter Chat' : 'Connecting...'}
-          </button>
-          <button className="logout-button" onClick={logout}>
-            Logout
-          </button>
+          <p>Connecting to chat...</p>
         </div>
       </div>
     );
@@ -258,57 +350,75 @@ function App() {
   // Chat screen
   return (
     <div className="chat-screen">
-      {/* Header */}
-      <div className="chat-header">
-        <h2>🤖 AI Group Chat</h2>
-        <div className="user-info">
-          <span className="current-user">👤 {username}</span>
-          <span className="user-count">
-            {userCount} user{userCount !== 1 ? 's' : ''} online
-          </span>
-          {!connected && (
-            <span className="disconnected-badge">⚠️ Disconnected</span>
-          )}
+      {/* Room Sidebar */}
+      <RoomList
+        rooms={rooms}
+        currentRoom={currentRoom}
+        onRoomSwitch={handleRoomSwitch}
+        onCreateRoom={handleCreateRoom}
+        onDeleteRoom={handleDeleteRoom}
+      />
+
+      {/* Main Chat Area */}
+      <div className="chat-main">
+        {/* Header */}
+        <div className="chat-header">
+          <div className="header-left">
+            <h2>{currentRoom?.name || 'AI Group Chat'}</h2>
+            {currentRoom?.description && (
+              <span className="room-description">{currentRoom.description}</span>
+            )}
+          </div>
+          <div className="user-info">
+            <span className="current-user">👤 {username}</span>
+            <span className="user-count">
+              {userCount} user{userCount !== 1 ? 's' : ''} online
+            </span>
+            {!connected && (
+              <span className="disconnected-badge">⚠️ Disconnected</span>
+            )}
+            <button className="logout-btn-small" onClick={logout}>Logout</button>
+          </div>
         </div>
-      </div>
 
-      {/* Messages */}
-      <div className="messages-container">
-        {messages.length === 0 ? (
-          <div className="empty-state">
-            <p>👋 Welcome to the AI Group Chat!</p>
-            <p>Start a conversation or mention <code>@AI</code> for help</p>
-          </div>
-        ) : (
-          messages.map(renderMessage)
-        )}
-        <div ref={messagesEndRef} />
-      </div>
+        {/* Messages */}
+        <div className="messages-container">
+          {messages.length === 0 ? (
+            <div className="empty-state">
+              <p>👋 Welcome to {currentRoom?.name || 'the chat'}!</p>
+              <p>Start a conversation or mention <code>@AI</code> for help</p>
+            </div>
+          ) : (
+            messages.map(renderMessage)
+          )}
+          <div ref={messagesEndRef} />
+        </div>
 
-      {/* Input bar */}
-      <div className="input-bar">
-        {aiStreaming && (
-          <div className="ai-indicator">
-            🤖 AI is responding...
+        {/* Input bar */}
+        <div className="input-bar">
+          {aiStreaming && (
+            <div className="ai-indicator">
+              🤖 AI is responding...
+            </div>
+          )}
+          <div className="input-wrapper">
+            <input
+              type="text"
+              className="message-input"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Type a message... (use @AI to call AI assistant)"
+              disabled={!connected}
+            />
+            <button
+              className="send-button"
+              onClick={handleSend}
+              disabled={!connected || !input.trim()}
+            >
+              Send
+            </button>
           </div>
-        )}
-        <div className="input-wrapper">
-          <input
-            type="text"
-            className="message-input"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Type a message... (use @AI to call AI assistant)"
-            disabled={!connected}
-          />
-          <button
-            className="send-button"
-            onClick={handleSend}
-            disabled={!connected || !input.trim()}
-          >
-            Send
-          </button>
         </div>
       </div>
     </div>
