@@ -144,10 +144,10 @@ rsync -av --delete "$PROJECT_ROOT/frontend/dist/" "$PROD_DIR/frontend/dist/"
 print_info "Copying PM2 ecosystem config..."
 cp "$PROJECT_ROOT/ecosystem.config.js" "$PROD_DIR/"
 
-# Install serve globally if not present
-if ! command -v serve &> /dev/null; then
-    print_info "Installing serve globally..."
-    npm install -g serve
+# Check if serve is available (don't try to install globally - may require sudo)
+if ! command -v serve &> /dev/null && ! npx serve --version &> /dev/null; then
+    print_error "Warning: 'serve' not found globally. Will use 'npx serve' instead."
+    print_info "To install serve globally (optional): npm install -g serve"
 fi
 
 # Update gateway nginx configuration
