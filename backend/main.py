@@ -30,10 +30,7 @@ app = FastAPI(title="AI Group Chat API")
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=["*"],  # Allow all origins since behind nginx gateway
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,10 +40,7 @@ app.add_middleware(
 # ========== Socket.IO Server ==========
 sio = socketio.AsyncServer(
     async_mode='asgi',
-    cors_allowed_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    cors_allowed_origins="*",  # Allow all origins since behind nginx gateway
     logger=True,
     engineio_logger=False  # Reduce log noise
 )
