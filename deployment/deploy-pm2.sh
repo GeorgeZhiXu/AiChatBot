@@ -259,10 +259,18 @@ fi
 # Save PM2 configuration
 pm2 save
 
-# Setup PM2 startup script if not already done
-if ! pm2 startup | grep -q "already"; then
+# Setup PM2 startup script if not already done (skip in automated deployments - requires sudo)
+if [[ -z "$CI" ]] && [[ ! -f "$HOME/Library/LaunchAgents/pm2.$(whoami).plist" ]]; then
     print_info "Setting up PM2 startup script..."
-    pm2 startup launchd -u "$(whoami)" --hp "$HOME" | tail -n 1 | bash
+    print_error "PM2 startup requires manual setup with sudo:"
+    print_error "  1. Run: pm2 startup launchd"
+    print_error "  2. Follow the instructions to enable auto-start"
+else
+    if [[ -f "$HOME/Library/LaunchAgents/pm2.$(whoami).plist" ]]; then
+        print_status "PM2 startup script already configured"
+    else
+        print_info "Skipping PM2 startup setup (CI environment)"
+    fi
 fi
 
 # Verify deployment
