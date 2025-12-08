@@ -61,12 +61,15 @@ rsync -av --delete \
     "$PROJECT_ROOT/backend/" "$PROD_DIR/backend/"
 
 # Preserve .env if exists, otherwise copy from example
+ENV_NEEDS_CONFIG=false
 if [[ ! -f "$PROD_DIR/backend/.env" ]]; then
-    print_info "Creating .env file..."
+    print_info "Creating .env file from example..."
     if [[ -f "$PROD_DIR/backend/.env.example" ]]; then
         cp "$PROD_DIR/backend/.env.example" "$PROD_DIR/backend/.env"
-        print_error "Please edit $PROD_DIR/backend/.env with your API keys"
-        exit 1
+        ENV_NEEDS_CONFIG=true
+        print_error "⚠️  .env file created but needs configuration!"
+        print_error "    Edit: $PROD_DIR/backend/.env"
+        print_error "    Required: DEEPSEEK_API_KEY, SECRET_KEY"
     fi
 fi
 
@@ -246,6 +249,17 @@ pm2 list | grep "aichatbot"
 echo ""
 print_status "Deployment completed successfully!"
 echo ""
+
+# Show warning if .env needs configuration
+if [[ "$ENV_NEEDS_CONFIG" == "true" ]]; then
+    echo ""
+    print_error "⚠️  IMPORTANT: Configure your .env file!"
+    print_error "    1. Edit: $PROD_DIR/backend/.env"
+    print_error "    2. Add your DEEPSEEK_API_KEY and SECRET_KEY"
+    print_error "    3. Restart backend: pm2 restart aichatbot-backend"
+    echo ""
+fi
+
 print_info "Access URLs:"
 echo "  - Frontend:  http://localhost:3030"
 echo "  - Backend:   http://localhost:8030"

@@ -1,9 +1,10 @@
-name: Deploy to Mac Mini
+name: Deploy to Mac Mini (Legacy - Disabled)
 
 on:
-  push:
-    branches:
-      - main
+  # Disabled in favor of deploy-pm2.yml
+  # push:
+  #   branches:
+  #     - main
   workflow_dispatch:
 
 jobs:
