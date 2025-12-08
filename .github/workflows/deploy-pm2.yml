@@ -1,0 +1,152 @@
+name: Deploy to Mac Mini (PM2 + Gateway)
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - '**.md'
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip tests'
+        required: false
+        default: 'false'
+
+jobs:
+  deploy:
+    name: Deploy to Mac Mini with PM2
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Mac Mini via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        env:
+          DEPLOYMENT_DIR: /Users/xuzhi/prod/aichatbot
+        with:
+          host: ${{ secrets.MAC_MINI_HOST }}
+          username: ${{ secrets.MAC_MINI_USER }}
+          key: ${{ secrets.MAC_MINI_SSH_KEY }}
+          port: ${{ secrets.MAC_MINI_SSH_PORT || 22 }}
+          command_timeout: 10m
+          script: |
+            set -e
+
+            # Colors
+            GREEN='\033[0;32m'
+            YELLOW='\033[1;33m'
+            RED='\033[0;31m'
+            NC='\033[0m'
+
+            echo -e "${GREEN}========================================${NC}"
+            echo -e "${GREEN}🚀 AiChatBot Deployment Starting${NC}"
+            echo -e "${GREEN}========================================${NC}"
+
+            # Navigate to source directory
+            cd ~/AiChatBot || {
+              echo -e "${RED}❌ AiChatBot directory not found${NC}"
+              exit 1
+            }
+
+            # Pull latest code
+            echo -e "${YELLOW}📥 Pulling latest code...${NC}"
+            git fetch origin
+            git reset --hard origin/main
+            git clean -fd
+
+            # Run deployment script
+            echo -e "${YELLOW}🔧 Running PM2 deployment script...${NC}"
+            chmod +x deployment/deploy-pm2.sh
+            ./deployment/deploy-pm2.sh
+
+            # Verify deployment
+            echo ""
+            echo -e "${GREEN}========================================${NC}"
+            echo -e "${GREEN}✅ Deployment Verification${NC}"
+            echo -e "${GREEN}========================================${NC}"
+
+            # Wait for services to start
+            sleep 5
+
+            # Check backend
+            if curl -sf http://localhost:8030/health > /dev/null; then
+              echo -e "${GREEN}✓ Backend is healthy (port 8030)${NC}"
+            else
+              echo -e "${RED}✗ Backend health check failed${NC}"
+              pm2 logs aichatbot-backend --lines 20 --nostream
+              exit 1
+            fi
+
+            # Check frontend
+            if curl -sf -o /dev/null http://localhost:3030; then
+              echo -e "${GREEN}✓ Frontend is serving (port 3030)${NC}"
+            else
+              echo -e "${RED}✗ Frontend check failed${NC}"
+              pm2 logs aichatbot-frontend --lines 20 --nostream
+              exit 1
+            fi
+
+            # Check gateway
+            if curl -sf http://localhost/health > /dev/null; then
+              echo -e "${GREEN}✓ Gateway is responding${NC}"
+            else
+              echo -e "${YELLOW}⚠ Gateway check failed (may need manual nginx restart)${NC}"
+            fi
+
+            # Display PM2 status
+            echo ""
+            echo -e "${YELLOW}📊 PM2 Process Status:${NC}"
+            pm2 list | grep aichatbot || pm2 list
+
+            echo ""
+            echo -e "${GREEN}========================================${NC}"
+            echo -e "${GREEN}🎉 Deployment Completed Successfully!${NC}"
+            echo -e "${GREEN}========================================${NC}"
+            echo ""
+            echo -e "Access your application:"
+            echo -e "  • Frontend:       http://localhost:3030"
+            echo -e "  • Backend:        http://localhost:8030"
+            echo -e "  • Via Gateway:    http://${{ secrets.MAC_MINI_HOST }}/aichatbot/"
+            echo -e "  • API via Gateway: http://${{ secrets.MAC_MINI_HOST }}/aichatbot-api/"
+            echo ""
+
+      - name: Send deployment notification
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ AiChatBot deployed successfully to Mac Mini!"
+            echo "🌐 Access at: http://${{ secrets.MAC_MINI_HOST }}/aichatbot/"
+          else
+            echo "❌ Deployment failed! Check the logs above for details."
+            exit 1
+          fi
+
+      - name: Deployment summary
+        if: success()
+        run: |
+          echo "### 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Status**: Successful" >> $GITHUB_STEP_SUMMARY
+          echo "📦 **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "👤 **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "🏠 **Target**: Mac Mini at ${{ secrets.MAC_MINI_HOST }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Access Points" >> $GITHUB_STEP_SUMMARY
+          echo "- Frontend: \`http://localhost:3030\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Backend: \`http://localhost:8030\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Gateway: \`http://${{ secrets.MAC_MINI_HOST }}/aichatbot/\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Management" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# View logs" >> $GITHUB_STEP_SUMMARY
+          echo "pm2 logs aichatbot" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Restart services" >> $GITHUB_STEP_SUMMARY
+          echo "pm2 restart aichatbot-backend aichatbot-frontend" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
