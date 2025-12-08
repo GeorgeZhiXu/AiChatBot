@@ -60,16 +60,51 @@ rsync -av --delete \
     --exclude='.env' \
     "$PROJECT_ROOT/backend/" "$PROD_DIR/backend/"
 
-# Preserve .env if exists, otherwise copy from example
+# Configure .env file
 ENV_NEEDS_CONFIG=false
 if [[ ! -f "$PROD_DIR/backend/.env" ]]; then
-    print_info "Creating .env file from example..."
-    if [[ -f "$PROD_DIR/backend/.env.example" ]]; then
+    print_info "Creating .env file..."
+
+    # Check if environment variables are provided (from GitHub Actions)
+    if [[ -n "$DEEPSEEK_API_KEY" ]] && [[ -n "$SECRET_KEY" ]]; then
+        print_info "Using environment variables from GitHub Secrets..."
+        cat > "$PROD_DIR/backend/.env" << EOF
+DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY
+DEEPSEEK_API_BASE=https://api.deepseek.com
+SECRET_KEY=$SECRET_KEY
+DATABASE_URL=sqlite:///./chat.db
+EOF
+        print_status ".env file created with GitHub Secrets"
+    elif [[ -f "$PROD_DIR/backend/.env.example" ]]; then
+        # Fallback to example if no secrets provided
         cp "$PROD_DIR/backend/.env.example" "$PROD_DIR/backend/.env"
         ENV_NEEDS_CONFIG=true
-        print_error "⚠️  .env file created but needs configuration!"
+        print_error "⚠️  .env file created from example template"
         print_error "    Edit: $PROD_DIR/backend/.env"
         print_error "    Required: DEEPSEEK_API_KEY, SECRET_KEY"
+    fi
+else
+    # Update existing .env with new secrets if provided
+    if [[ -n "$DEEPSEEK_API_KEY" ]] && [[ -n "$SECRET_KEY" ]]; then
+        print_info "Updating .env with GitHub Secrets..."
+
+        # Update or add DEEPSEEK_API_KEY
+        if grep -q "^DEEPSEEK_API_KEY=" "$PROD_DIR/backend/.env"; then
+            sed -i '' "s|^DEEPSEEK_API_KEY=.*|DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY|" "$PROD_DIR/backend/.env"
+        else
+            echo "DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY" >> "$PROD_DIR/backend/.env"
+        fi
+
+        # Update or add SECRET_KEY
+        if grep -q "^SECRET_KEY=" "$PROD_DIR/backend/.env"; then
+            sed -i '' "s|^SECRET_KEY=.*|SECRET_KEY=$SECRET_KEY|" "$PROD_DIR/backend/.env"
+        else
+            echo "SECRET_KEY=$SECRET_KEY" >> "$PROD_DIR/backend/.env"
+        fi
+
+        print_status ".env file updated with GitHub Secrets"
+    else
+        print_status "Using existing .env file"
     fi
 fi
 

@@ -29,12 +29,15 @@ jobs:
         uses: appleboy/ssh-action@v1.0.0
         env:
           DEPLOYMENT_DIR: /Users/xuzhi/prod/aichatbot
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
         with:
           host: ${{ secrets.MAC_MINI_HOST }}
           username: ${{ secrets.MAC_MINI_USER }}
           key: ${{ secrets.MAC_MINI_SSH_KEY }}
           port: ${{ secrets.MAC_MINI_SSH_PORT || 22 }}
           command_timeout: 10m
+          envs: DEPLOYMENT_DIR,DEEPSEEK_API_KEY,SECRET_KEY
           script: |
             set -e
 
