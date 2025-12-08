@@ -108,6 +108,58 @@ npm run dev -- --host
 - **本机访问**：http://localhost:5173
 - **局域网访问**：http://你的IP:5173（如 http://192.168.1.22:5173）
 
+## 🚀 生产部署
+
+### Mac Mini + PM2 + Nginx Gateway 部署
+
+完整的生产环境部署方案，支持自动化 CI/CD：
+
+📚 **部署文档：**
+- **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** - 完整部署指南（架构、设置、配置、故障排查）
+- **[GITHUB_ACTIONS.md](GITHUB_ACTIONS.md)** - GitHub Actions CI/CD 详细说明
+- **[DEPLOYMENT_PM2.md](DEPLOYMENT_PM2.md)** - PM2 进程管理详细文档
+- **[GITHUB_SECRETS.md](GITHUB_SECRETS.md)** - GitHub Secrets 配置指南
+
+### 快速部署
+
+1. **在 Mac mini 上运行**：
+   ```bash
+   cd ~/AiChatBot
+   chmod +x deployment/deploy-pm2.sh
+   ./deployment/deploy-pm2.sh
+   ```
+
+2. **配置 GitHub Secrets** (用于自动部署):
+   - `MAC_MINI_HOST`: Mac mini IP 地址
+   - `MAC_MINI_USER`: SSH 用户名
+   - `MAC_MINI_SSH_KEY`: SSH 私钥
+   - `DEEPSEEK_API_KEY`: DeepSeek API 密钥
+   - `SECRET_KEY`: JWT 密钥
+
+3. **自动部署**：每次 `git push` 自动触发部署
+
+### 生产环境访问
+
+- **主页**: http://24.19.48.87/
+- **AiChatBot**: http://24.19.48.87/aichatbot/
+- **健康检查**: http://24.19.48.87/health
+
+### PM2 管理命令
+
+```bash
+# 查看状态
+pm2 list | grep aichatbot
+
+# 查看日志
+pm2 logs aichatbot
+
+# 重启服务
+pm2 restart aichatbot-backend aichatbot-frontend
+
+# 监控面板
+pm2 monit
+```
+
 ## 📖 使用说明
 
 ### 基本聊天
