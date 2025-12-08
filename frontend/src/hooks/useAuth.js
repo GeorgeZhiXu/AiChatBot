@@ -3,9 +3,9 @@ import axios from 'axios';
 
 // API URL configuration - adapts to development/production
 const getApiUrl = () => {
-  // Production: use same host (nginx proxy handles /api)
+  // Production: use same host (nginx proxy handles /aichatbot-api)
   if (import.meta.env.PROD) {
-    return `${window.location.origin}/api`;
+    return `${window.location.origin}/aichatbot-api`;
   }
   // Development: direct connection to backend
   if (window.location.hostname === 'localhost') {

@@ -3,15 +3,18 @@ import { io } from 'socket.io-client';
 
 // Socket.IO URL configuration - adapts to development/production
 const getSocketUrl = () => {
-  // Production: use same host (nginx proxy handles /socket.io)
+  // Production: use same host with /aichatbot-api path (nginx proxy handles it)
   if (import.meta.env.PROD) {
-    return window.location.origin;
+    return {
+      url: window.location.origin,
+      path: '/aichatbot-api/socket.io/'
+    };
   }
   // Development: direct connection to backend
   if (window.location.hostname === 'localhost') {
-    return 'http://localhost:8000';
+    return { url: 'http://localhost:8000', path: '/socket.io/' };
   }
-  return `http://${window.location.hostname}:8000`;
+  return { url: `http://${window.location.hostname}:8000`, path: '/socket.io/' };
 };
 
 const SOCKET_URL = getSocketUrl();
@@ -29,6 +32,7 @@ export function useSocket(token = null) {
   useEffect(() => {
     // Create Socket.IO connection with optional auth
     const connectionOptions = {
+      path: SOCKET_URL.path,
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1000,
@@ -42,7 +46,7 @@ export function useSocket(token = null) {
       connectionOptions.auth = { token };
     }
 
-    const newSocket = io(SOCKET_URL, connectionOptions);
+    const newSocket = io(SOCKET_URL.url, connectionOptions);
 
     socketRef.current = newSocket;
     setSocket(newSocket);
