@@ -81,13 +81,14 @@ jobs:
             cp gateway/nginx.conf "$GATEWAY_DIR/config/services.d/aichatbot.conf"
             cp gateway/pm2.config.js "$GATEWAY_DIR/pm2.d/aichatbot.config.js"
 
-            # Restart PM2 processes
-            pm2 restart aichatbot-backend aichatbot-frontend 2>/dev/null || \
-              pm2 start "$GATEWAY_DIR/pm2.d/aichatbot.config.js"
+            # Restart PM2 processes (delete stale entries first if needed)
+            pm2 delete aichatbot-backend aichatbot-frontend 2>/dev/null || true
+            pm2 start "$GATEWAY_DIR/pm2.d/aichatbot.config.js"
             pm2 save
 
-            # Validate and reload nginx
-            nginx -t -c "$GATEWAY_DIR/config/nginx.conf" && nginx -s reload
+            # Validate and reload nginx (start if not running)
+            nginx -t -c "$GATEWAY_DIR/config/nginx.conf"
+            nginx -s reload 2>/dev/null || nginx -c "$GATEWAY_DIR/config/nginx.conf"
 
             # Health checks
             sleep 3
