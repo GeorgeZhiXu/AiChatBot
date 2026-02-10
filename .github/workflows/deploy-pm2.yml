@@ -34,9 +34,8 @@ jobs:
             PROD_DIR="/Users/xuzhi/prod/aichatbot"
             GATEWAY_DIR="/Users/xuzhi/prod/gateway"
 
-            # Clone or pull
+            # Clone or pull (public repo, no token needed)
             if [ ! -d "$PROD_DIR/.git" ]; then
-              # Back up existing non-git directory if present
               if [ -d "$PROD_DIR" ]; then
                 mv "$PROD_DIR" "${PROD_DIR}.bak.$(date +%Y%m%d%H%M%S)"
               fi
@@ -46,10 +45,18 @@ jobs:
             fi
             cd "$PROD_DIR"
 
-            # Backend: setup venv and install deps (prefer python3.12 for compatibility)
+            # Backend: setup venv with python3.12 and install deps
             cd backend
             PYTHON=$(command -v python3.12 || command -v python3)
-            if [ ! -d ".venv" ]; then
+            if [ -d ".venv" ]; then
+              # Recreate venv if wrong Python version
+              VENV_PY=$(.venv/bin/python3 --version 2>/dev/null | grep -o '3\.[0-9]*' || echo "")
+              TARGET_PY=$($PYTHON --version 2>/dev/null | grep -o '3\.[0-9]*' || echo "")
+              if [ "$VENV_PY" != "$TARGET_PY" ]; then
+                rm -rf .venv
+                $PYTHON -m venv .venv
+              fi
+            else
               $PYTHON -m venv .venv
             fi
             .venv/bin/pip install -r requirements.txt -q
