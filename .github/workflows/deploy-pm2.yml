@@ -1,23 +1,13 @@
-name: Deploy to Mac Mini (PM2 + Gateway)
+name: Deploy AiChatBot to Mac Mini
 
 on:
   push:
-    branches:
-      - main
-    paths-ignore:
-      - 'README.md'
-      - 'docs/**'
-      - '**.md'
+    branches: [main]
+    paths-ignore: ['**.md']
   workflow_dispatch:
-    inputs:
-      skip_tests:
-        description: 'Skip tests'
-        required: false
-        default: 'false'
 
 jobs:
   deploy:
-    name: Deploy to Mac Mini with PM2
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -25,135 +15,68 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Deploy to Mac Mini via SSH
-        uses: appleboy/ssh-action@v1.0.0
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
         env:
-          CI: true
-          DEPLOYMENT_DIR: /Users/xuzhi/prod/aichatbot
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
         with:
           host: ${{ secrets.MAC_MINI_HOST }}
           username: ${{ secrets.MAC_MINI_USER }}
           key: ${{ secrets.MAC_MINI_SSH_KEY }}
-          port: ${{ secrets.MAC_MINI_SSH_PORT || 22 }}
+          port: ${{ secrets.MAC_MINI_SSH_PORT }}
           command_timeout: 10m
-          envs: CI,DEPLOYMENT_DIR,DEEPSEEK_API_KEY,SECRET_KEY
+          envs: DEEPSEEK_API_KEY,SECRET_KEY
           script: |
             set -e
-
-            # Setup PATH for homebrew and node
             export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | tail -1)/bin:$PATH"
 
-            # Colors
-            GREEN='\033[0;32m'
-            YELLOW='\033[1;33m'
-            RED='\033[0;31m'
-            NC='\033[0m'
+            PROD_DIR="/Users/xuzhi/prod/aichatbot"
+            GATEWAY_DIR="/Users/xuzhi/prod/gateway"
 
-            echo -e "${GREEN}========================================${NC}"
-            echo -e "${GREEN}🚀 AiChatBot Deployment Starting${NC}"
-            echo -e "${GREEN}========================================${NC}"
-
-            # Navigate to source directory
-            cd ~/AiChatBot || {
-              echo -e "${RED}❌ AiChatBot directory not found${NC}"
-              exit 1
-            }
-
-            # Pull latest code
-            echo -e "${YELLOW}📥 Pulling latest code...${NC}"
-            git fetch origin
-            git reset --hard origin/main
-            git clean -fd
-
-            # Run deployment script
-            echo -e "${YELLOW}🔧 Running PM2 deployment script...${NC}"
-            chmod +x deployment/deploy-pm2.sh
-            ./deployment/deploy-pm2.sh
-
-            # Verify deployment
-            echo ""
-            echo -e "${GREEN}========================================${NC}"
-            echo -e "${GREEN}✅ Deployment Verification${NC}"
-            echo -e "${GREEN}========================================${NC}"
-
-            # Wait for services to start
-            sleep 5
-
-            # Check backend
-            if curl -sf http://localhost:8030/health > /dev/null; then
-              echo -e "${GREEN}✓ Backend is healthy (port 8030)${NC}"
+            # Clone or pull
+            if [ ! -d "$PROD_DIR/.git" ]; then
+              git clone https://github.com/GeorgeZhiXu/AiChatBot.git "$PROD_DIR"
             else
-              echo -e "${RED}✗ Backend health check failed${NC}"
-              pm2 logs aichatbot-backend --lines 20 --nostream
-              exit 1
+              cd "$PROD_DIR" && git pull origin main
             fi
+            cd "$PROD_DIR"
 
-            # Check frontend
-            if curl -sf -o /dev/null http://localhost:3030; then
-              echo -e "${GREEN}✓ Frontend is serving (port 3030)${NC}"
-            else
-              echo -e "${RED}✗ Frontend check failed${NC}"
-              pm2 logs aichatbot-frontend --lines 20 --nostream
-              exit 1
+            # Backend: setup venv and install deps
+            cd backend
+            if [ ! -d ".venv" ]; then
+              python3 -m venv .venv
             fi
+            .venv/bin/pip install -r requirements.txt -q
 
-            # Check gateway
-            if curl -sf http://localhost/health > /dev/null; then
-              echo -e "${GREEN}✓ Gateway is responding${NC}"
-            else
-              echo -e "${YELLOW}⚠ Gateway check failed (may need manual nginx restart)${NC}"
-            fi
+            # Write .env from secrets
+            cat > .env << ENVEOF
+            DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+            DEEPSEEK_API_BASE=https://api.deepseek.com
+            SECRET_KEY=${SECRET_KEY}
+            DATABASE_URL=sqlite:///./chat.db
+            ENVEOF
+            cd ..
 
-            # Display PM2 status
-            echo ""
-            echo -e "${YELLOW}📊 PM2 Process Status:${NC}"
-            pm2 list | grep aichatbot || pm2 list
+            # Frontend: install deps and build
+            cd frontend
+            npm ci --prefer-offline
+            npm run build
+            cd ..
 
-            echo ""
-            echo -e "${GREEN}========================================${NC}"
-            echo -e "${GREEN}🎉 Deployment Completed Successfully!${NC}"
-            echo -e "${GREEN}========================================${NC}"
-            echo ""
-            echo -e "Access your application:"
-            echo -e "  • Frontend:       http://localhost:3030"
-            echo -e "  • Backend:        http://localhost:8030"
-            echo -e "  • Via Gateway:    http://${{ secrets.MAC_MINI_HOST }}/aichatbot/"
-            echo -e "  • API via Gateway: http://${{ secrets.MAC_MINI_HOST }}/aichatbot-api/"
-            echo ""
+            # Copy gateway configs
+            cp gateway/nginx.conf "$GATEWAY_DIR/config/services.d/aichatbot.conf"
+            cp gateway/pm2.config.js "$GATEWAY_DIR/pm2.d/aichatbot.config.js"
 
-      - name: Send deployment notification
-        if: always()
-        run: |
-          if [ "${{ job.status }}" == "success" ]; then
-            echo "✅ AiChatBot deployed successfully to Mac Mini!"
-            echo "🌐 Access at: http://${{ secrets.MAC_MINI_HOST }}/aichatbot/"
-          else
-            echo "❌ Deployment failed! Check the logs above for details."
-            exit 1
-          fi
+            # Restart PM2 processes
+            pm2 restart aichatbot-backend aichatbot-frontend 2>/dev/null || \
+              pm2 start "$GATEWAY_DIR/pm2.d/aichatbot.config.js"
+            pm2 save
 
-      - name: Deployment summary
-        if: success()
-        run: |
-          echo "### 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ **Status**: Successful" >> $GITHUB_STEP_SUMMARY
-          echo "📦 **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "👤 **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-          echo "🏠 **Target**: Mac Mini at ${{ secrets.MAC_MINI_HOST }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Access Points" >> $GITHUB_STEP_SUMMARY
-          echo "- Frontend: \`http://localhost:3030\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Backend: \`http://localhost:8030\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Gateway: \`http://${{ secrets.MAC_MINI_HOST }}/aichatbot/\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Management" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "# View logs" >> $GITHUB_STEP_SUMMARY
-          echo "pm2 logs aichatbot" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# Restart services" >> $GITHUB_STEP_SUMMARY
-          echo "pm2 restart aichatbot-backend aichatbot-frontend" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            # Validate and reload nginx
+            nginx -t -c "$GATEWAY_DIR/config/nginx.conf" && nginx -s reload
+
+            # Health checks
+            sleep 3
+            curl -sf http://localhost:8030/health > /dev/null && echo "Backend healthy" || echo "Backend check failed"
+            curl -sf -o /dev/null http://localhost:3030 && echo "Frontend healthy" || echo "Frontend check failed"
