@@ -88,9 +88,10 @@ jobs:
 
             # Validate and reload nginx
             nginx -t -c "$GATEWAY_DIR/config/nginx.conf"
-            if [ -f "$GATEWAY_DIR/logs/nginx.pid" ]; then
+            if [ -f "$GATEWAY_DIR/logs/nginx.pid" ] && kill -0 "$(cat "$GATEWAY_DIR/logs/nginx.pid")" 2>/dev/null; then
               nginx -c "$GATEWAY_DIR/config/nginx.conf" -s reload
             else
+              rm -f "$GATEWAY_DIR/logs/nginx.pid"
               nginx -c "$GATEWAY_DIR/config/nginx.conf"
             fi
 
