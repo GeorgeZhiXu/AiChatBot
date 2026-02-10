@@ -77,6 +77,7 @@ jobs:
             cd ..
 
             # Copy gateway configs
+            mkdir -p "$GATEWAY_DIR/config/services.d" "$GATEWAY_DIR/pm2.d"
             cp gateway/nginx.conf "$GATEWAY_DIR/config/services.d/aichatbot.conf"
             cp gateway/pm2.config.js "$GATEWAY_DIR/pm2.d/aichatbot.config.js"
 
