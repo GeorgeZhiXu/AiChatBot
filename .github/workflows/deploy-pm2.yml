@@ -86,9 +86,13 @@ jobs:
             pm2 start "$GATEWAY_DIR/pm2.d/aichatbot.config.js"
             pm2 save
 
-            # Validate and reload nginx (start if not running)
+            # Validate and reload nginx
             nginx -t -c "$GATEWAY_DIR/config/nginx.conf"
-            nginx -s reload 2>/dev/null || nginx -c "$GATEWAY_DIR/config/nginx.conf"
+            if [ -f "$GATEWAY_DIR/logs/nginx.pid" ]; then
+              nginx -c "$GATEWAY_DIR/config/nginx.conf" -s reload
+            else
+              nginx -c "$GATEWAY_DIR/config/nginx.conf"
+            fi
 
             # Health checks
             sleep 3
