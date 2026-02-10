@@ -46,10 +46,11 @@ jobs:
             fi
             cd "$PROD_DIR"
 
-            # Backend: setup venv and install deps
+            # Backend: setup venv and install deps (prefer python3.12 for compatibility)
             cd backend
+            PYTHON=$(command -v python3.12 || command -v python3)
             if [ ! -d ".venv" ]; then
-              python3 -m venv .venv
+              $PYTHON -m venv .venv
             fi
             .venv/bin/pip install -r requirements.txt -q
 
