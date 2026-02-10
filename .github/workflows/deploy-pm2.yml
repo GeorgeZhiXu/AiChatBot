@@ -36,6 +36,10 @@ jobs:
 
             # Clone or pull
             if [ ! -d "$PROD_DIR/.git" ]; then
+              # Back up existing non-git directory if present
+              if [ -d "$PROD_DIR" ]; then
+                mv "$PROD_DIR" "${PROD_DIR}.bak.$(date +%Y%m%d%H%M%S)"
+              fi
               git clone https://github.com/GeorgeZhiXu/AiChatBot.git "$PROD_DIR"
             else
               cd "$PROD_DIR" && git pull origin main
