@@ -22,15 +22,15 @@ const SOCKET_URL = getSocketUrl();
 /**
  * Socket.IO custom hook
  * Manages WebSocket connection with auto-reconnect
- * @param {string} token - Optional JWT token for authentication
+ * @param {string} username - Gateway-authenticated username
  */
-export function useSocket(token = null) {
+export function useSocket(username = null) {
   const [socket, setSocket] = useState(null);
   const [connected, setConnected] = useState(false);
   const socketRef = useRef(null);
 
   useEffect(() => {
-    // Create Socket.IO connection with optional auth
+    // Create Socket.IO connection with gateway username auth
     const connectionOptions = {
       path: SOCKET_URL.path,
       transports: ['websocket', 'polling'],
@@ -41,9 +41,9 @@ export function useSocket(token = null) {
       timeout: 20000
     };
 
-    // Add auth token if provided
-    if (token) {
-      connectionOptions.auth = { token };
+    // Pass username in auth handshake for gateway authentication
+    if (username) {
+      connectionOptions.auth = { username };
     }
 
     const newSocket = io(SOCKET_URL.url, connectionOptions);
@@ -82,7 +82,7 @@ export function useSocket(token = null) {
       console.log('[Socket.IO] Closing connection');
       newSocket.close();
     };
-  }, []);
+  }, [username]);
 
   return { socket, connected };
 }

@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSocket } from './hooks/useSocket';
 import { useAuth } from './hooks/useAuth';
-import { AuthScreen } from './components/AuthScreen';
 import { RoomList } from './components/RoomList';
 
 function App() {
-  const { token, user, loading: authLoading, login, register, logout } = useAuth();
-  const { socket, connected } = useSocket(token);
+  const { user, loading: authLoading, logout } = useAuth();
+  const { socket, connected } = useSocket(user?.username);
 
   // Login state
   const [username, setUsername] = useState('');
@@ -223,12 +222,15 @@ function App() {
     };
   }, [socket, rooms, currentRoom]);
 
-  // Join chat
-  const handleJoin = () => {
-    if (!username.trim() || !socket) return;
-    socket.emit('user_join', { username: username.trim() });
-    setIsJoined(true);
-  };
+  // Auto-join when user is authenticated and socket is connected
+  useEffect(() => {
+    if (user && connected && socket && !isJoined) {
+      const displayName = user.display_name || user.username;
+      setUsername(displayName);
+      setIsJoined(true);
+      socket.emit('user_join', { username: displayName });
+    }
+  }, [user, connected, socket, isJoined]);
 
   // Send message
   const handleSend = () => {
@@ -241,11 +243,7 @@ function App() {
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (isJoined) {
-        handleSend();
-      } else {
-        handleJoin();
-      }
+      handleSend();
     }
   };
 
@@ -322,25 +320,26 @@ function App() {
     );
   }
 
-  // Not authenticated - show login/register
-  if (!token || !user) {
-    return <AuthScreen onLogin={login} onRegister={register} />;
-  }
-
-  // Authenticated but not joined chat - auto-join
-  if (!isJoined) {
-    // Auto-set username from authenticated user and join
-    if (user && connected && socket) {
-      setUsername(user.username);
-      setIsJoined(true);
-      socket.emit('user_join', { username: user.username });
-    }
-
+  // Not authenticated via gateway - show message
+  if (!user) {
     return (
       <div className="login-screen">
         <div className="login-box">
           <h1>🤖 AI Group Chat</h1>
-          <p>Welcome, {user.username}!</p>
+          <p>Authentication required. Please log in via the gateway.</p>
+          <a href="/">Go to Dashboard</a>
+        </div>
+      </div>
+    );
+  }
+
+  // Authenticated but not yet joined (connecting...)
+  if (!isJoined) {
+    return (
+      <div className="login-screen">
+        <div className="login-box">
+          <h1>🤖 AI Group Chat</h1>
+          <p>Welcome, {user.display_name || user.username}!</p>
           <p>Connecting to chat...</p>
         </div>
       </div>

@@ -18,10 +18,9 @@ import socketio
 from deepseek_client import chat_completion_stream
 from database import init_db, get_db, DatabaseHelper
 from models import User as DBUser, Room as DBRoom, Message as DBMessage
-from auth import create_access_token, authenticate_user, create_user, get_user_by_token
+from auth import get_user_by_token
 from room_manager import RoomManager
 from fastapi import HTTPException, Header
-from pydantic import BaseModel
 
 
 # ========== FastAPI Application ==========
@@ -289,22 +288,13 @@ async def handle_ai_request(request: dict):
 # ========== Socket.IO Events ==========
 @sio.event
 async def connect(sid, environ, auth):
-    """Client connected - supports optional token authentication"""
-    token = auth.get('token') if auth else None
+    """Client connected - accepts gateway-authenticated username"""
+    username = auth.get('username') if auth else None
 
-    if token:
-        # Token-based authentication - just verify, don't add user yet
-        # User will be added in user_join event
-        with get_db() as db:
-            user = get_user_by_token(db, token)
-            if user:
-                print(f"[Socket.IO] Valid token for user {user.username} (sid: {sid})")
-                return True
-            else:
-                print(f"[Socket.IO] Invalid token for sid: {sid}")
-                # Don't reject - allow fallback to username login
-
-    print(f"[Socket.IO] Client connected: {sid} (no token)")
+    if username:
+        print(f"[Socket.IO] Gateway user connected: {username} (sid: {sid})")
+    else:
+        print(f"[Socket.IO] Client connected: {sid} (no username)")
 
 
 @sio.event
@@ -652,18 +642,6 @@ async def delete_room(sid, data):
             await sio.emit('error', {'message': str(e)}, room=sid)
 
 
-# ========== Pydantic Models for API ==========
-class RegisterRequest(BaseModel):
-    username: str
-    password: str
-    email: Optional[str] = None
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
 # ========== HTTP Endpoints ==========
 @app.get("/")
 def read_root():
@@ -686,54 +664,42 @@ def health_check():
     }
 
 
-# ========== Authentication Endpoints ==========
-@app.post("/api/auth/register")
-async def register(req: RegisterRequest):
-    """Register a new user"""
-    with get_db() as db:
-        try:
-            user = create_user(db, req.username, req.password, req.email)
-            token = create_access_token({"sub": user.username, "user_id": user.id})
-            return {
-                "token": token,
-                "user": user.to_dict()
-            }
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            print(f"[Auth Error] Register: {e}")
-            raise HTTPException(status_code=500, detail="Registration failed")
+# ========== Authentication Endpoints (Gateway) ==========
+@app.get("/api/auth/gateway")
+async def gateway_auth(x_auth_user: str = Header(None), x_auth_display_name: str = Header(None)):
+    """Authenticate via gateway headers (X-Auth-User, X-Auth-Display-Name)"""
+    if not x_auth_user:
+        raise HTTPException(status_code=401, detail="Not authenticated via gateway")
 
-
-@app.post("/api/auth/login")
-async def login(req: LoginRequest):
-    """Login user"""
-    with get_db() as db:
-        user = authenticate_user(db, req.username, req.password)
-        if not user:
-            raise HTTPException(status_code=401, detail="Invalid username or password")
-
-        token = create_access_token({"sub": user.username, "user_id": user.id})
-        return {
-            "token": token,
-            "user": user.to_dict()
-        }
+    return {
+        "username": x_auth_user,
+        "display_name": x_auth_display_name or x_auth_user
+    }
 
 
 @app.get("/api/auth/me")
-async def get_current_user(authorization: str = Header(None)):
-    """Get current authenticated user"""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+async def get_current_user(
+    x_auth_user: str = Header(None),
+    x_auth_display_name: str = Header(None),
+    authorization: str = Header(None)
+):
+    """Get current user - checks gateway headers first, then falls back to JWT token"""
+    # Gateway header authentication (primary)
+    if x_auth_user:
+        return {
+            "username": x_auth_user,
+            "display_name": x_auth_display_name or x_auth_user
+        }
 
-    token = authorization.replace("Bearer ", "")
+    # JWT token fallback
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "")
+        with get_db() as db:
+            user = get_user_by_token(db, token)
+            if user:
+                return user.to_dict()
 
-    with get_db() as db:
-        user = get_user_by_token(db, token)
-        if not user:
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        return user.to_dict()
+    raise HTTPException(status_code=401, detail="Not authenticated")
 
 
 # ========== Startup Event ==========
