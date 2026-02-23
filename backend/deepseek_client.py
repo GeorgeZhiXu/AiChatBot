@@ -3,6 +3,12 @@ Claude via AWS Bedrock client.
 Replaces the previous DeepSeek/OpenAI-compatible client.
 Uses the Bedrock HTTP API with bearer token authentication.
 """
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 import os
 from typing import List, Dict, Generator
 
