@@ -209,12 +209,23 @@ async def handle_ai_request(request: dict):
 
     # Build message context from current room
     context = chat_state.get_context_for_ai(room_id, max_messages=10)
-    messages = [
-        {"role": "system", "content": "You are a helpful AI assistant in a group chat. Provide concise and friendly responses."}
-    ]
-    messages.extend(context)
-    messages.append({"role": "user", "content": query})
-
+    system_prompt = "You are a helpful AI assistant in a group chat. Provide concise and friendly responses."
+    
+    # Claude requires: first message must be "user", and roles must alternate.
+    # Strip leading assistant messages and merge consecutive same-role messages.
+    messages = []
+    for msg in context:
+        if not messages and msg["role"] == "assistant":
+            continue  # skip leading assistant messages
+        if messages and messages[-1]["role"] == msg["role"]:
+            messages[-1]["content"] += "\n" + msg["content"]
+        else:
+            messages.append(dict(msg))
+    # Merge with last message if also user role, otherwise append
+    if messages and messages[-1]["role"] == "user":
+        messages[-1]["content"] += "\n" + query
+    else:
+        messages.append({"role": "user", "content": query})
     # Generate AI message ID (will be replaced by database ID)
     ai_message_id = f"ai_{timestamp.timestamp()}"
 
@@ -239,12 +250,12 @@ async def handle_ai_request(request: dict):
             try:
                 for chunk in chat_completion_stream(
                     messages=messages,
-                    model="deepseek-chat",
+                    system=system_prompt,
                     temperature=0.7
                 ):
                     chunks.append(chunk)
             except Exception as e:
-                print(f"[DeepSeek Error] {e}")
+                print(f"[Bedrock Error] {e}")
                 raise
             return chunks
 
@@ -707,7 +718,7 @@ async def get_current_user(
 async def startup_event():
     """Start background tasks on startup"""
     print("[Server] Starting AI Group Chat Backend...")
-    print(f"[Server] DEEPSEEK_API_KEY: {'Set' if os.getenv('DEEPSEEK_API_KEY') else 'NOT SET!'}")
+    print(f"[Server] AWS_BEARER_TOKEN_BEDROCK: {'Set' if os.getenv('AWS_BEARER_TOKEN_BEDROCK') else 'NOT SET!'}")
 
     # Initialize database
     init_db()
