@@ -9,7 +9,7 @@ from typing import List, Dict, Generator
 import httpx
 
 BEDROCK_TOKEN = os.environ.get("AWS_BEARER_TOKEN_BEDROCK", "")
-BEDROCK_MODEL = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+BEDROCK_MODEL = os.environ.get("BEDROCK_MODEL", "us.anthropic.claude-sonnet-4-20250514-v1:0")
 BEDROCK_REGION = "us-west-2"
 BEDROCK_URL = f"https://bedrock-runtime.{BEDROCK_REGION}.amazonaws.com/model/{BEDROCK_MODEL}/invoke"
 
