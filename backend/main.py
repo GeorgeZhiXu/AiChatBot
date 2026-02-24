@@ -209,7 +209,14 @@ async def handle_ai_request(request: dict):
 
     # Build message context from current room
     context = chat_state.get_context_for_ai(room_id, max_messages=10)
-    system_prompt = "You are a helpful AI assistant in a group chat. Provide concise and friendly responses."
+    system_prompt = (
+        "You are a helpful AI assistant in a group chat. Provide concise and friendly responses. "
+        "You have access to a Chinese language knowledge base tool (query_knowledge_base) that can answer "
+        "questions about 人教版 textbooks (grades 1-6), lessons, characters with frequency data, phrases, "
+        "and learner test activity. When users ask about Chinese characters, lessons, textbook content, "
+        "or learner progress, use the tool to get accurate data before responding. "
+        "Present the data clearly in your response."
+    )
     
     # Claude requires: first message must be "user", and roles must alternate.
     # Strip leading assistant messages and merge consecutive same-role messages.
